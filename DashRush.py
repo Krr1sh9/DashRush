@@ -1,3 +1,5 @@
+
+# Import required modules
 import pygame
 import random
 import time
@@ -6,7 +8,7 @@ import os
 # Initialize pygame
 pygame.init()
 
-# Constants
+# Constants for screen size and colors
 WIDTH, HEIGHT = 800, 600
 WHITE = (255, 255, 255)
 BLACK = (0, 0, 0)
@@ -14,38 +16,37 @@ GREEN = (0, 200, 0)
 RED = (255, 0, 0)
 BLUE = (0, 0, 255)
 PURPLE = (160, 32, 240)
+
+# Constants for player and obstacle sizes
 PLAYER_SIZE = 50
 OBSTACLE_WIDTH, OBSTACLE_HEIGHT = 50, 50
 LANES = [150, 300, 450]
 FONT = pygame.font.Font(None, 36)
 
-# Base directory
+# Base directory for saving files
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SAVE_FILE = os.path.join(BASE_DIR, "highscore.txt")
 DIFFICULTY_FILE = os.path.join(BASE_DIR, "difficulty.txt")
 
-# Difficulty constants
+# Difficulty speed boundaries
 MIN_SPEED = 3
 MAX_SPEED = 12
 
-# Create screen
+# Set up display window
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("DashRun")
+pygame.display.set_caption("DashRush")
 
-# Load assets
+# Create game assets
 player_img = pygame.Surface((PLAYER_SIZE, PLAYER_SIZE))
 player_img.fill(RED)
-
 obstacle_img = pygame.Surface((OBSTACLE_WIDTH, OBSTACLE_HEIGHT))
 obstacle_img.fill(BLUE)
-
 chaser_img = pygame.Surface((OBSTACLE_WIDTH, OBSTACLE_HEIGHT))
 chaser_img.fill(PURPLE)
-
 powerup_img = pygame.Surface((30, 30))
-powerup_img.fill((255, 255, 0))  # Yellow
+powerup_img.fill((255, 255, 0))
 
-# Load/save functions
+# Load/save utility functions
 def load_high_score():
     if os.path.exists(SAVE_FILE):
         with open(SAVE_FILE, "r") as file:
@@ -72,22 +73,58 @@ def get_speed_from_difficulty(difficulty):
 def get_spawn_delay(difficulty):
     return max(500, 1500 - 10 * difficulty)
 
-def adjust_difficulty(elapsed_time):
-    global difficulty, success_streak
-    if elapsed_time < 5:
-        success_streak = 0
-        return
-    if elapsed_time >= high_score * 0.75:
-        success_streak += 1
-        if success_streak >= 3:
-            difficulty = min(100, difficulty + 5)
-            success_streak = 0
-    elif elapsed_time < high_score * 0.5:
-        difficulty = max(0, difficulty - 5)
-        success_streak = 0
-    save_difficulty(difficulty)
+# AI Agent class for DDA
+class DDAAgent:
+    def __init__(self, initial_difficulty):
+        self.difficulty = initial_difficulty
+        self.recent_scores = []
+        self.performance_streak = 0
+        self.last_performance = None
+        self.powerup_assist = False
 
-# Player setup
+    def update_difficulty(self, elapsed_time, high_score):
+        performance_ratio = elapsed_time / high_score if high_score > 0 else 0
+        self.recent_scores.append(elapsed_time)
+        if len(self.recent_scores) > 5:
+            self.recent_scores.pop(0)
+
+        # Evaluate current performance
+        if performance_ratio > 0.8:
+            current = "good"
+        elif performance_ratio < 0.3:
+            current = "bad"
+        else:
+            current = "neutral"
+
+        # Update streak tracking
+        if current == self.last_performance and current in ["good", "bad"]:
+            self.performance_streak += 1
+        elif current in ["good", "bad"]:
+            self.performance_streak = 1
+        else:
+            self.performance_streak = 0
+
+        self.last_performance = current
+
+        # Adjust difficulty only after 3 same-type performances
+        if self.performance_streak >= 3:
+            if current == "good":
+                self.difficulty = min(100, self.difficulty + 5)
+                self.powerup_assist = False
+            elif current == "bad":
+                self.difficulty = max(0, self.difficulty - 5)
+                self.powerup_assist = True
+            self.performance_streak = 0  # Reset streak after adjustment
+
+        else:
+            self.powerup_assist = (current == "bad")
+
+        return self.difficulty
+
+    def should_drop_extra_powerups(self):
+        return self.powerup_assist
+
+# Game state
 player_x = 100
 player_y = LANES[1]
 player_lane = 1
@@ -95,20 +132,19 @@ jumping = False
 jump_velocity = -15
 player_velocity_y = 0
 gravity = 1
-
-# Game state
 high_score = load_high_score()
 difficulty = load_difficulty()
 session_difficulty = difficulty
-success_streak = 0
+dda_agent = DDAAgent(difficulty)
 SPEED = get_speed_from_difficulty(session_difficulty)
 running = False
 
+# Menu
 def show_menu():
     menu_running = True
     while menu_running:
         screen.fill(WHITE)
-        title_text = FONT.render("DashRun", True, BLACK)
+        title_text = FONT.render("DashRush", True, BLACK)
         screen.blit(title_text, (WIDTH // 2 - title_text.get_width() // 2, 100))
         start_button = pygame.Rect(WIDTH // 2 - 100, 250, 200, 50)
         pygame.draw.rect(screen, GREEN, start_button)
@@ -130,6 +166,12 @@ def show_menu():
 
 running = show_menu()
 
+def adjust_difficulty(elapsed_time):
+    global difficulty, session_difficulty
+    difficulty = dda_agent.update_difficulty(elapsed_time, high_score)
+    session_difficulty = difficulty
+    save_difficulty(difficulty)
+
 def reset_game():
     global player_y, player_lane, jumping, obstacles, chasers, powerups
     global start_time, SPEED, obstacle_spawn_timer, chaser_spawn_timer, session_difficulty
@@ -140,12 +182,11 @@ def reset_game():
     chasers.clear()
     powerups.clear()
     start_time = time.time()
-    session_difficulty = difficulty  # Reset session difficulty
+    session_difficulty = difficulty
     SPEED = get_speed_from_difficulty(session_difficulty)
     obstacle_spawn_timer = pygame.time.get_ticks()
     chaser_spawn_timer = pygame.time.get_ticks()
 
-# Game objects
 obstacles = []
 chasers = []
 powerups = []
@@ -160,7 +201,7 @@ spawn_delay = get_spawn_delay(session_difficulty)
 start_time = time.time()
 clock = pygame.time.Clock()
 
-# Game loop
+# Main game loop
 while running:
     screen.fill(GREEN)
     pygame.draw.line(screen, BLACK, (0, 225), (WIDTH, 225), 5)
@@ -181,7 +222,6 @@ while running:
     target_y = LANES[player_lane]
     if not jumping:
         player_y += (target_y - player_y) * 0.2
-
     if jumping:
         player_y += player_velocity_y
         player_velocity_y += gravity
@@ -202,7 +242,7 @@ while running:
         chasers.append([WIDTH, LANES[lane], direction])
         chaser_spawn_timer = current_time
 
-    if session_difficulty <= 30 and current_time - powerup_timer > powerup_interval:
+    if (session_difficulty <= 30 or dda_agent.should_drop_extra_powerups()) and current_time - powerup_timer > powerup_interval:
         lane = random.randint(0, 2)
         powerups.append([WIDTH, LANES[lane]])
         powerup_timer = current_time
@@ -232,6 +272,7 @@ while running:
             powerups.remove(powerup)
 
     elapsed_time = int(time.time() - start_time)
+
     for obstacle in obstacles:
         if player_x + PLAYER_SIZE > obstacle[0] and player_x < obstacle[0] + OBSTACLE_WIDTH:
             if abs(player_y - obstacle[1]) < 10 and not jumping:
@@ -255,14 +296,12 @@ while running:
     for powerup in powerups[:]:
         if player_x + PLAYER_SIZE > powerup[0] and player_x < powerup[0] + 30:
             if abs(player_y - powerup[1]) < 10:
-                # Only affect session difficulty, do NOT save to file
                 session_difficulty = max(0, session_difficulty - 10)
                 SPEED = get_speed_from_difficulty(session_difficulty)
                 spawn_delay = get_spawn_delay(session_difficulty)
                 powerups.remove(powerup)
 
     screen.blit(player_img, (player_x, player_y))
-
     minutes = elapsed_time // 60
     seconds = elapsed_time % 60
     timer_text = FONT.render(f"Time: {minutes:02}:{seconds:02}", True, BLACK)
@@ -272,6 +311,14 @@ while running:
     screen.blit(FONT.render(f"Difficulty: {session_difficulty}", True, BLACK), (WIDTH // 2 - 80, 10))
     pygame.draw.rect(screen, BLACK, (WIDTH // 2 - 100, 40, 200, 15), 2)
     pygame.draw.rect(screen, RED, (WIDTH // 2 - 100, 40, 2 * session_difficulty, 15))
+
+    feedback_msg = ""
+    if dda_agent.powerup_assist:
+        feedback_msg = "You're struggling — AI Assist Activated!"
+    elif session_difficulty >= 90:
+        feedback_msg = "You're crushing it — max difficulty soon!"
+    feedback_text = FONT.render(feedback_msg, True, BLACK)
+    screen.blit(feedback_text, (WIDTH // 2 - feedback_text.get_width() // 2, HEIGHT - 50))
 
     pygame.display.flip()
     clock.tick(60)
